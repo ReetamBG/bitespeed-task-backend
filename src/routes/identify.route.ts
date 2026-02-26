@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { insertContact } from "../controllers/identify.controller.js";
+import { createContact, fetchContacts } from "../controllers/identify.controller.js";
 
 const router = Router();
 
-router.post("/", insertContact);
+router.post("/", fetchContacts);
+router.post("/create", createContact);
 
 export default router;
