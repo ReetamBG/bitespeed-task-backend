@@ -8,7 +8,11 @@
     "start:dev": "tsx --watch --env-file .env src/index.ts",
     "start": "node --env-file .env dist/index.js",
     "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prepare": "prisma generate"
   },
   "repository": {
     "type": "git",
@@ -23,15 +27,17 @@
   },
   "homepage": "https://github.com/ReetamBG/bitespeed-task-backend#readme",
   "dependencies": {
-    "express": "^5.2.1"
+    "@prisma/adapter-pg": "^7.4.1",
+    "@prisma/client": "^7.4.1",
+    "express": "^5.2.1",
+    "pg": "^8.19.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.1",
+    "@types/pg": "^8.16.0",
+    "prisma": "^7.4.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
-  },
-  "imports": {
-    "#/*": "./src/*"
   }
 }
