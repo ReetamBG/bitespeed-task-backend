@@ -15,11 +15,11 @@ export const fetchContacts = async (req: Request, res: Response) => {
       });
     }
 
-    const contact = await findContacts(email, phoneNumber);
+    const serviceResponse = await findContacts(email, phoneNumber);
 
     res.status(201).json({
       success: true,
-      data: contact,
+      contact: serviceResponse.contact,
     });
   } catch (error) {
     res.status(500).json({
@@ -40,7 +40,7 @@ export const createContact = async (req: Request, res: Response) => {
       });
     }
 
-    const contact = await createNewContact(email, phoneNumber, true);
+    const contact = await createNewContact(email, phoneNumber);
 
     res.status(201).json({
       success: true,

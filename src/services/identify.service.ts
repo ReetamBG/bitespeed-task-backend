@@ -4,14 +4,16 @@ import { LinkPrecedence } from "../generated/prisma/client.js";
 export const createNewContact = async (
   email: string,
   phoneNumber: string,
-  isPrimary: boolean = true
+  linkedId: number | null = null,
+  linkPrecedence: LinkPrecedence = LinkPrecedence.primary,
 ) => {
   console.log("Creating contact with:", { email, phoneNumber });
   const contact = await prisma.contact.create({
     data: {
       email,
       phoneNumber,
-      linkPrecedence: isPrimary ? LinkPrecedence.primary : LinkPrecedence.secondary,
+      linkedId,
+      linkPrecedence,
     },
   });
 
@@ -36,7 +38,7 @@ export const findContacts = async (email: string, phoneNumber: string) => {
   });
 
   if (contacts.length === 0) {
-    const newContact = await createNewContact(email, phoneNumber, true);
+    const newContact = await createNewContact(email, phoneNumber);
     return {
       contact: {
         primaryContactId: newContact.id,
@@ -61,6 +63,7 @@ export const findContacts = async (email: string, phoneNumber: string) => {
   if (primaryIds.size > 1) {
     // TODO: merge needed
     console.log("Merge required for contacts: ", contacts);
+    throw new Error("Multiple primary contacts found, merge required. This is not implemented yet.");
   }
 
   const primaryContact = await prisma.contact.findFirst({
@@ -84,6 +87,25 @@ export const findContacts = async (email: string, phoneNumber: string) => {
       OR: [{ id: primaryContact.id }, { linkedId: primaryContact.id }],
     },
   });
+
+  // check if a contact with same email or phone number exists in the fullGroup
+  // if yes then do nothing else create a new secondary contact linked to the primary contact
+  const alreadyExists = fullGroup.some(
+    (c) =>
+      (email ? c.email === email : true) && // true if email is not provided
+      (phoneNumber ? c.phoneNumber === phoneNumber : true), // true if phone number is not provided
+  );
+
+  if (!alreadyExists) {
+    const newSecondary = await createNewContact(
+      email,
+      phoneNumber,
+      primaryContact.id,
+      LinkPrecedence.secondary,
+    );
+
+    fullGroup.push({ ...newSecondary, linkedId: primaryContact.id }); // add the new secondary contact to the full group for response construction
+  }
 
   // construct response
   const primaryContactId = primaryContact.id;
