@@ -1,9 +1,11 @@
 import express from "express";
 import identifyRoutes from "./routes/identify.route.js";
+import cors from "cors";
 
 const app = express();
 const port = process.env.PORT || 3000;
 
+app.use(cors())  // added this in case it is needed for testing with frontend, can be removed if not needed
 app.use(express.json());
 
 app.get("/health", (req, res) => {
