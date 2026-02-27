@@ -8,7 +8,7 @@ const createNewContact = async (
   linkPrecedence: LinkPrecedence = LinkPrecedence.primary,
   tx?: PrismaTransactionalClient,
 ) => {
-  console.log("Creating contact with:", { email, phoneNumber });
+  // use transactional client if provided, else use regular prisma client
   const contact = await (tx || prisma).contact.create({
     data: {
       email,
@@ -27,22 +27,24 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     throw new Error("Email or phone number is required");
   }
 
+  // find all contacts that match the email or phone number
   const conditions = [];
   if (email) conditions.push({ email });
   if (phoneNumber) conditions.push({ phoneNumber });
 
   const contacts = await prisma.contact.findMany({
     where: {
-      deletedAt: null, // TODO: Do i really need this ? - Yes, due to soft delete
+      deletedAt: null,
       OR: conditions,
     },
   });
 
+  // if no contacts found, create a new primary contact and return response
   if (contacts.length === 0) {
     const newContact = await createNewContact(email, phoneNumber);
     return {
       contact: {
-        primaryContatctId: newContact.id, // !! Typo in requirement docs - kept it as it is if needed for test cases
+        primaryContatctId: newContact.id, // !!! Typo in requirement docs - kept it as it is if needed for test cases
         emails: email ? [email] : [],
         phoneNumbers: phoneNumber ? [phoneNumber] : [],
         secondaryContactIds: [],
@@ -50,7 +52,9 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     };
   }
 
-  let primaryIds = new Set<number>();
+  // find all primary contact IDs from the matched contacts
+  // (including linkedId for secondaries, as they point to their primary contact)
+  let primaryIds = new Set<number>(); // set to avoid duplicates
   for (let c of contacts) {
     if (c.linkPrecedence === LinkPrecedence.primary) {
       primaryIds.add(c.id);
@@ -61,18 +65,19 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     }
   }
 
-  let canonicalPrimaryId: number = 0;
+  let canonicalPrimaryId: number = 0; // the true primary contact ID
   let primaryContact: Contact | null = null;
-  let fullGroup: Contact[] = [];
+  let fullGroup: Contact[] = []; // the entire linked group pointing to the primary contact
 
   // Everything below this should ideally be done in a DB transaction
-  // to prevent data inconsistency due to concurrent requests modifying the multiple contacts
+  // to prevent data inconsistency due to modifying the multiple contacts
   await prisma.$transaction(async (tx) => {
     if (primaryIds.size > 1) {
-      // merge primaries if multiple primary contacts found
+      // if multiple primary contacts found - merge them
       const oldestPrimaryId = await mergePrimaries(Array.from(primaryIds), tx);
       canonicalPrimaryId = oldestPrimaryId;
     } else {
+      // else take the only primary contact found as the canonical primary contact
       if (primaryIds.size === 0) {
         throw new Error("Data inconsistency: no primary ID found");
       }
@@ -87,11 +92,13 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     });
 
     if (!primaryContact) {
-      // This should never happen, data inconsistency if it does
-      // as we have already verified existence of primary contacts above
-      throw new Error("No primary contact found");
+      // This should never happen
+      // data inconsistency if it does, as we have already verified existence of primary contacts above
+      throw new Error("No primary contact found - possible data inconsistency");
     }
 
+    // find full group using primary primary contact id
+    // includes contacts with id == primary id or linkedId == primary id (if its a secondary contact)
     fullGroup = await tx.contact.findMany({
       where: {
         deletedAt: null,
@@ -110,22 +117,20 @@ export const findContacts = async (email: string, phoneNumber: string) => {
 
   // ensure primaryContact was assigned (should always be true after successful transaction)
   if (!primaryContact) {
-    throw new Error("Primary contact not found after transaction");
+    throw new Error(
+      "Primary contact not found after transaction - possible data inconsistency",
+    );
   }
 
   // construct response
   const res = buildResponse(primaryContact, fullGroup);
-
-  console.log("Matched contact:", contacts);
-  console.log("Primary contact IDs:", primaryIds);
-  console.log("Chosen primary: ", primaryContact);
-  console.log("Full group: ", fullGroup);
 
   return res;
 };
 
 // merge primaries
 // if multiple primaries found, link them to the oldest primary and convert them to secondaries
+// needed for the case - Can primary contacts turn into secondary? (from requirement docs)
 const mergePrimaries = async (
   primaryIds: number[],
   tx: PrismaTransactionalClient,
@@ -153,10 +158,6 @@ const mergePrimaries = async (
 
   const contactsToUpdate = primaryContacts.slice(1); // all except the oldest primary
 
-  // TODO: start DB transaction
-  // Transaction needed to ensure that all updates happen atomically,
-  // preventing data inconsistency as we are updating multiple records together
-
   for (let contact of contactsToUpdate) {
     // convert duplicate primaries to secondaries
     // link them to the oldest primary
@@ -180,6 +181,7 @@ const mergePrimaries = async (
 
 // check if there is new information (new email or new phone) that doesn't exist in the fullGroup
 // if there is new information, create a new secondary contact linked to the primary contact
+// needed for the case - When is a secondary contact created? (from requirement docs)
 const createSecondaryIfNecessary = async (
   email: string,
   phoneNumber: string,
@@ -200,7 +202,8 @@ const createSecondaryIfNecessary = async (
       tx,
     );
 
-    fullGroup.push({ ...newSecondary, linkedId: primaryContact.id }); // add the new secondary contact to the full group for response construction
+    // add the new secondary contact to the full group for response construction
+    fullGroup.push({ ...newSecondary, linkedId: primaryContact.id });
   }
 };
 
@@ -243,7 +246,7 @@ const buildResponse = (primaryContact: Contact, fullGroup: Contact[]) => {
 
   return {
     contact: {
-      primaryContatctId: primaryContactId, // !! Typo in requirement docs - kept it as it is if needed for test cases
+      primaryContatctId: primaryContactId, // !!! Typo in requirement docs - kept it as it is if needed for test cases
       emails,
       phoneNumbers,
       secondaryContactIds: secondaryContactIdsArray,

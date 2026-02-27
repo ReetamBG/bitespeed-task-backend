@@ -4,7 +4,8 @@ import { findContacts } from "../services/identify.service.js";
 export const fetchContacts = async (req: Request, res: Response) => {
   try {
     const { email, phoneNumber } = req.body;
-    console.log("Received data:", { email, phoneNumber });
+
+    // atleast one of email or phone number should be present
     if (!email && !phoneNumber) {
       return res.status(400).json({
         success: false,
