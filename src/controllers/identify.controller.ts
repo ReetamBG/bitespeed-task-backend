@@ -1,8 +1,5 @@
 import type { Request, Response } from "express";
-import {
-  createNewContact,
-  findContacts,
-} from "../services/identify.service.js";
+import { findContacts } from "../services/identify.service.js";
 
 export const fetchContacts = async (req: Request, res: Response) => {
   try {
@@ -17,9 +14,7 @@ export const fetchContacts = async (req: Request, res: Response) => {
 
     const serviceResponse = await findContacts(email, phoneNumber);
 
-    res.status(200).json({
-      contact: serviceResponse.contact,
-    });
+    res.status(200).json(serviceResponse);
   } catch (error) {
     res.status(500).json({
       success: false,

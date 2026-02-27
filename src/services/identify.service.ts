@@ -1,7 +1,7 @@
 import { prisma, type PrismaTransactionalClient } from "../lib/prisma.js";
 import { LinkPrecedence, type Contact } from "../generated/prisma/client.js";
 
-export const createNewContact = async (
+const createNewContact = async (
   email: string,
   phoneNumber: string,
   linkedId: number | null = null,
@@ -42,7 +42,7 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     const newContact = await createNewContact(email, phoneNumber);
     return {
       contact: {
-        primaryContactId: newContact.id,
+        primaryContatctId: newContact.id, // !! Typo in requirement docs - kept it as it is if needed for test cases
         emails: email ? [email] : [],
         phoneNumbers: phoneNumber ? [phoneNumber] : [],
         secondaryContactIds: [],
@@ -178,8 +178,8 @@ const mergePrimaries = async (
   return oldestPrimary.id;
 };
 
-// check if a contact with same email or phone number exists in the fullGroup
-// if yes then do nothing else create a new secondary contact linked to the primary contact
+// check if there is new information (new email or new phone) that doesn't exist in the fullGroup
+// if there is new information, create a new secondary contact linked to the primary contact
 const createSecondaryIfNecessary = async (
   email: string,
   phoneNumber: string,
@@ -187,13 +187,11 @@ const createSecondaryIfNecessary = async (
   fullGroup: Contact[],
   tx: PrismaTransactionalClient,
 ) => {
-  const alreadyExists = fullGroup.some(
-    (c) =>
-      (email ? c.email === email : true) && // true if email is not provided
-      (phoneNumber ? c.phoneNumber === phoneNumber : true), // true if phone number is not provided
-  );
+  const hasNewEmail = email && !fullGroup.some((c) => c.email === email);
+  const hasNewPhone =
+    phoneNumber && !fullGroup.some((c) => c.phoneNumber === phoneNumber);
 
-  if (!alreadyExists) {
+  if (hasNewEmail || hasNewPhone) {
     const newSecondary = await createNewContact(
       email,
       phoneNumber,
@@ -230,13 +228,22 @@ const buildResponse = (primaryContact: Contact, fullGroup: Contact[]) => {
   }
 
   // add the secondary emails and phone numbers to the primary ones, ensuring no duplicates
-  emails.push(...secondaryEmails);
-  phoneNumbers.push(...secondaryPhoneNumbers);
+  for (const e of secondaryEmails) {
+    if (e !== primaryContact.email) {
+      emails.push(e);
+    }
+  }
+  for (const p of secondaryPhoneNumbers) {
+    if (p !== primaryContact.phoneNumber) {
+      phoneNumbers.push(p);
+    }
+  }
+
   const secondaryContactIdsArray = Array.from(secondaryContactIds);
 
   return {
     contact: {
-      primaryContactId,
+      primaryContatctId: primaryContactId, // !! Typo in requirement docs - kept it as it is if needed for test cases
       emails,
       phoneNumbers,
       secondaryContactIds: secondaryContactIdsArray,
