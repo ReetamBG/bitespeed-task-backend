@@ -1,4 +1,4 @@
-import { prisma } from "../lib/prisma.js";
+import { prisma, type PrismaTransactionalClient } from "../lib/prisma.js";
 import { LinkPrecedence, type Contact } from "../generated/prisma/client.js";
 
 export const createNewContact = async (
@@ -6,9 +6,10 @@ export const createNewContact = async (
   phoneNumber: string,
   linkedId: number | null = null,
   linkPrecedence: LinkPrecedence = LinkPrecedence.primary,
+  tx?: PrismaTransactionalClient,
 ) => {
   console.log("Creating contact with:", { email, phoneNumber });
-  const contact = await prisma.contact.create({
+  const contact = await (tx || prisma).contact.create({
     data: {
       email,
       phoneNumber,
@@ -60,45 +61,57 @@ export const findContacts = async (email: string, phoneNumber: string) => {
     }
   }
 
-  let canonicalPrimaryId: number;
+  let canonicalPrimaryId: number = 0;
+  let primaryContact: Contact | null = null;
+  let fullGroup: Contact[] = [];
 
-  if (primaryIds.size > 1) {
-    // merge primaries if multiple primary contacts found
-    const oldestPrimaryId = await mergePrimaries(Array.from(primaryIds));
-    canonicalPrimaryId = oldestPrimaryId;
-  } else {
-    if (primaryIds.size === 0) {
-      throw new Error("Data inconsistency: no primary ID found");
+  // Everything below this should ideally be done in a DB transaction
+  // to prevent data inconsistency due to concurrent requests modifying the multiple contacts
+  await prisma.$transaction(async (tx) => {
+    if (primaryIds.size > 1) {
+      // merge primaries if multiple primary contacts found
+      const oldestPrimaryId = await mergePrimaries(Array.from(primaryIds), tx);
+      canonicalPrimaryId = oldestPrimaryId;
+    } else {
+      if (primaryIds.size === 0) {
+        throw new Error("Data inconsistency: no primary ID found");
+      }
+      canonicalPrimaryId = Array.from(primaryIds)[0]!;
     }
-    canonicalPrimaryId = Array.from(primaryIds)[0]!;
-  }
 
-  const primaryContact = await prisma.contact.findFirst({
-    where: {
-      deletedAt: null,
-      id: canonicalPrimaryId,
-    },
+    primaryContact = await tx.contact.findFirst({
+      where: {
+        deletedAt: null,
+        id: canonicalPrimaryId,
+      },
+    });
+
+    if (!primaryContact) {
+      // This should never happen, data inconsistency if it does
+      // as we have already verified existence of primary contacts above
+      throw new Error("No primary contact found");
+    }
+
+    fullGroup = await tx.contact.findMany({
+      where: {
+        deletedAt: null,
+        OR: [{ id: primaryContact.id }, { linkedId: primaryContact.id }],
+      },
+    });
+
+    await createSecondaryIfNecessary(
+      email,
+      phoneNumber,
+      primaryContact,
+      fullGroup,
+      tx,
+    );
   });
 
+  // ensure primaryContact was assigned (should always be true after successful transaction)
   if (!primaryContact) {
-    // This should never happen, data inconsistency if it does
-    // as we have already verified existence of primary contacts above
-    throw new Error("No primary contact found");
+    throw new Error("Primary contact not found after transaction");
   }
-
-  const fullGroup = await prisma.contact.findMany({
-    where: {
-      deletedAt: null,
-      OR: [{ id: primaryContact.id }, { linkedId: primaryContact.id }],
-    },
-  });
-
-  await createSecondaryIfNecessary(
-    email,
-    phoneNumber,
-    primaryContact,
-    fullGroup,
-  );
 
   // construct response
   const res = buildResponse(primaryContact, fullGroup);
@@ -113,8 +126,11 @@ export const findContacts = async (email: string, phoneNumber: string) => {
 
 // merge primaries
 // if multiple primaries found, link them to the oldest primary and convert them to secondaries
-const mergePrimaries = async (primaryIds: number[]) => {
-  const primaryContacts = await prisma.contact.findMany({
+const mergePrimaries = async (
+  primaryIds: number[],
+  tx: PrismaTransactionalClient,
+) => {
+  const primaryContacts = await tx.contact.findMany({
     where: {
       deletedAt: null,
       id: { in: primaryIds },
@@ -141,25 +157,23 @@ const mergePrimaries = async (primaryIds: number[]) => {
   // Transaction needed to ensure that all updates happen atomically,
   // preventing data inconsistency as we are updating multiple records together
 
-  const result = await prisma.$transaction(async (tx) => {
-    for (let contact of contactsToUpdate) {
-      // convert duplicate primaries to secondaries
-      // link them to the oldest primary
-      await tx.contact.update({
-        where: { id: contact.id },
-        data: {
-          linkedId: oldestPrimary.id,
-          linkPrecedence: LinkPrecedence.secondary,
-        },
-      });
+  for (let contact of contactsToUpdate) {
+    // convert duplicate primaries to secondaries
+    // link them to the oldest primary
+    await tx.contact.update({
+      where: { id: contact.id },
+      data: {
+        linkedId: oldestPrimary.id,
+        linkPrecedence: LinkPrecedence.secondary,
+      },
+    });
 
-      // relink any secondaries linked to the duplicate primary to the oldest primary
-      await tx.contact.updateMany({
-        where: { linkedId: contact.id },
-        data: { linkedId: oldestPrimary.id },
-      });
-    }
-  });
+    // relink any secondaries linked to the duplicate primary to the oldest primary
+    await tx.contact.updateMany({
+      where: { linkedId: contact.id },
+      data: { linkedId: oldestPrimary.id },
+    });
+  }
 
   return oldestPrimary.id;
 };
@@ -171,6 +185,7 @@ const createSecondaryIfNecessary = async (
   phoneNumber: string,
   primaryContact: Contact,
   fullGroup: Contact[],
+  tx: PrismaTransactionalClient,
 ) => {
   const alreadyExists = fullGroup.some(
     (c) =>
@@ -184,6 +199,7 @@ const createSecondaryIfNecessary = async (
       phoneNumber,
       primaryContact.id,
       LinkPrecedence.secondary,
+      tx,
     );
 
     fullGroup.push({ ...newSecondary, linkedId: primaryContact.id }); // add the new secondary contact to the full group for response construction

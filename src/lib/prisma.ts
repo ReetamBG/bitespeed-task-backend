@@ -7,4 +7,8 @@ const connectionString = `${process.env.DATABASE_URL}`;
 const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
-export { prisma };
+type PrismaTransactionalClient = Parameters<
+    Parameters<PrismaClient['$transaction']>[0]
+>[0];
+
+export { prisma, type PrismaTransactionalClient };
