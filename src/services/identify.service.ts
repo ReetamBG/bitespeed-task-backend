@@ -60,7 +60,7 @@ export const findContacts = async (email: string, phoneNumber: string) => {
       primaryIds.add(c.id);
     } else {
       if (c.linkedId !== null) {
-        primaryIds.add(c.linkedId!);
+        primaryIds.add(c.linkedId);
       }
     }
   }
@@ -84,6 +84,7 @@ export const findContacts = async (email: string, phoneNumber: string) => {
       canonicalPrimaryId = Array.from(primaryIds)[0]!;
     }
 
+    // fetch cannonical primary after possible merging
     primaryContact = await tx.contact.findFirst({
       where: {
         deletedAt: null,
